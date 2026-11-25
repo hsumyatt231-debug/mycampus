@@ -2,14 +2,16 @@ import 'package:drift/drift.dart' as d;
 
 import '../models/academic_event.dart';
 import '../models/enums.dart';
+import '../services/cloud_write_service.dart';
 import '../services/local_database.dart';
 import 'pending_operation_writer.dart';
 
 class EventRepository {
-  EventRepository(this._database, this._writer);
+  EventRepository(this._database, this._writer, this._cloud);
 
   final LocalDatabase _database;
   final PendingOperationWriter _writer;
+  final CloudWriteService _cloud;
 
   Future<List<AcademicEvent>> getAll(String accountId) async {
     final rows =
@@ -44,6 +46,14 @@ class EventRepository {
     final now = DateTime.now().toUtc();
     final normalized = _normalize(event).copyWith(updatedAt: now);
 
+    final operation = _writer.build(
+      accountId: normalized.accountId,
+      entity: SyncEntity.academicEvent,
+      entityId: normalized.id,
+      type: SyncOperationType.create,
+      data: {...normalized.toJson(), 'account_id': normalized.accountId},
+    );
+
     await _database.transaction(() async {
       await _database
           .into(_database.localAcademicEvents)
@@ -63,22 +73,29 @@ class EventRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: normalized.accountId,
-        entity: SyncEntity.academicEvent,
-        entityId: normalized.id,
-        type: SyncOperationType.create,
-        data: {...normalized.toJson(), 'account_id': normalized.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return normalized;
+    final revision = await _cloud.deliverNow(operation);
+    return normalized.copyWith(
+      revision: revision ?? normalized.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
   Future<AcademicEvent> update(AcademicEvent event) async {
     _validate(event);
     final now = DateTime.now().toUtc();
     final normalized = _normalize(event).copyWith(updatedAt: now);
+
+    final operation = _writer.build(
+      accountId: normalized.accountId,
+      entity: SyncEntity.academicEvent,
+      entityId: normalized.id,
+      type: SyncOperationType.update,
+      baseRevision: normalized.revision,
+      data: {...normalized.toJson(), 'account_id': normalized.accountId},
+    );
 
     await _database.transaction(() async {
       await (_database.update(_database.localAcademicEvents)..where(
@@ -101,21 +118,30 @@ class EventRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: normalized.accountId,
-        entity: SyncEntity.academicEvent,
-        entityId: normalized.id,
-        type: SyncOperationType.update,
-        baseRevision: normalized.revision,
-        data: {...normalized.toJson(), 'account_id': normalized.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return normalized.copyWith(syncStatus: SyncStatus.pending);
+    final revision = await _cloud.deliverNow(operation);
+    return normalized.copyWith(
+      revision: revision ?? normalized.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
   Future<void> delete(AcademicEvent event) async {
     final now = DateTime.now().toUtc();
+    final operation = _writer.build(
+      accountId: event.accountId,
+      entity: SyncEntity.academicEvent,
+      entityId: event.id,
+      type: SyncOperationType.delete,
+      baseRevision: event.revision,
+      data: {
+        'id': event.id,
+        'account_id': event.accountId,
+        'deleted_at': now.toIso8601String(),
+      },
+    );
 
     await _database.transaction(() async {
       await (_database.update(_database.localAcademicEvents)..where(
@@ -129,19 +155,10 @@ class EventRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: event.accountId,
-        entity: SyncEntity.academicEvent,
-        entityId: event.id,
-        type: SyncOperationType.delete,
-        baseRevision: event.revision,
-        data: {
-          'id': event.id,
-          'account_id': event.accountId,
-          'deleted_at': now.toIso8601String(),
-        },
-      );
+      await _writer.enqueueBuilt(operation);
     });
+
+    await _cloud.deliverNow(operation);
   }
 
   void _validate(AcademicEvent event) {

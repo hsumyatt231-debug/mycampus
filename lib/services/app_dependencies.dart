@@ -16,6 +16,7 @@ import '../repositories/task_repository.dart';
 import '../repositories/timetable_repository.dart';
 import 'academic_clock.dart';
 import 'cloud_gateway.dart';
+import 'cloud_write_service.dart';
 import 'connectivity_service.dart';
 import 'encryption_key_service.dart';
 import 'http_cloud_gateway.dart';
@@ -23,7 +24,7 @@ import 'local_database.dart';
 import 'notification_service.dart';
 import 'sync_engine.dart';
 
-/// Composition root for the local-first build.
+/// Composition root for the online-first build with an offline queue fallback.
 ///
 /// The cloud gateway is [HttpCloudGateway], pointed at the SQLite/SQLAlchemy
 /// API by `MYCAMPUS_API_BASE_URL` (see [ApiConfig]). Swapping this one binding
@@ -36,6 +37,7 @@ class AppDependencies {
     required this.notifications,
     required this.connectivity,
     required this.gateway,
+    required this.cloudWrites,
     required this.subjects,
     required this.tasks,
     required this.timetable,
@@ -57,6 +59,7 @@ class AppDependencies {
   final NotificationService notifications;
   final ConnectivityService connectivity;
   final CloudGateway gateway;
+  final CloudWriteService cloudWrites;
 
   final SubjectRepository subjects;
   final TaskRepository tasks;
@@ -92,14 +95,27 @@ class AppDependencies {
     final keyService = EncryptionKeyService(database);
 
     // Single cloud binding: the REST gateway talks to the SQLite/SQLAlchemy
-    // API. Local Drift storage remains the source of truth when it is offline.
+    // API. Online writes go straight through it; offline writes stay queued.
     final gateway = HttpCloudGateway(tokenProvider: settings.cloudToken);
 
-    final timetable = TimetableRepository(database, writer);
-    final subjects = SubjectRepository(database, writer, timetable);
-    final tasks = TaskRepository(database, writer);
-    final events = EventRepository(database, writer);
-    final assignments = AssignmentRepository(database, writer, gateway);
+    final syncRepository = SyncRepository(database);
+    final cloudWrites = CloudWriteService(gateway, settings, syncRepository);
+
+    final timetable = TimetableRepository(database, writer, cloudWrites);
+    final subjects = SubjectRepository(
+      database,
+      writer,
+      timetable,
+      cloudWrites,
+    );
+    final tasks = TaskRepository(database, writer, cloudWrites);
+    final events = EventRepository(database, writer, cloudWrites);
+    final assignments = AssignmentRepository(
+      database,
+      writer,
+      gateway,
+      cloudWrites,
+    );
     final classrooms = ClassroomRepository(database, gateway, assignments);
 
     final accounts = AccountRepository(
@@ -108,9 +124,9 @@ class AppDependencies {
       writer: writer,
       keyService: keyService,
       gateway: gateway,
+      cloud: cloudWrites,
     );
 
-    final syncRepository = SyncRepository(database);
     final syncEngine = SyncEngine(repository: syncRepository, gateway: gateway);
 
     final notifications = InAppNotificationService();
@@ -133,6 +149,7 @@ class AppDependencies {
       notifications: notifications,
       connectivity: ConnectivityService(),
       gateway: gateway,
+      cloudWrites: cloudWrites,
       subjects: subjects,
       tasks: tasks,
       timetable: timetable,

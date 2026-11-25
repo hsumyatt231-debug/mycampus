@@ -2,6 +2,8 @@ import 'package:drift/drift.dart' as d;
 
 import '../models/enums.dart';
 import '../models/subject.dart';
+import '../models/sync_models.dart';
+import '../services/cloud_write_service.dart';
 import '../services/local_database.dart';
 import 'pending_operation_writer.dart';
 import 'timetable_repository.dart';
@@ -19,11 +21,12 @@ class SubjectImpact {
 }
 
 class SubjectRepository {
-  SubjectRepository(this._database, this._writer, this._timetable);
+  SubjectRepository(this._database, this._writer, this._timetable, this._cloud);
 
   final LocalDatabase _database;
   final PendingOperationWriter _writer;
   final TimetableRepository _timetable;
+  final CloudWriteService _cloud;
 
   Future<List<Subject>> getAll(String accountId) async {
     final rows =
@@ -52,6 +55,14 @@ class SubjectRepository {
     await _validate(subject, checkId: null);
     final now = DateTime.now().toUtc();
 
+    final operation = _writer.build(
+      accountId: subject.accountId,
+      entity: SyncEntity.subject,
+      entityId: subject.id,
+      type: SyncOperationType.create,
+      data: {...subject.toJson(), 'account_id': subject.accountId},
+    );
+
     await _database.transaction(() async {
       await _database
           .into(_database.localSubjects)
@@ -68,21 +79,29 @@ class SubjectRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: subject.accountId,
-        entity: SyncEntity.subject,
-        entityId: subject.id,
-        type: SyncOperationType.create,
-        data: {...subject.toJson(), 'account_id': subject.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return subject.copyWith(updatedAt: now);
+    final revision = await _cloud.deliverNow(operation);
+    return subject.copyWith(
+      updatedAt: now,
+      revision: revision ?? subject.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
   Future<Subject> update(Subject subject) async {
     await _validate(subject, checkId: subject.id);
     final now = DateTime.now().toUtc();
+
+    final operation = _writer.build(
+      accountId: subject.accountId,
+      entity: SyncEntity.subject,
+      entityId: subject.id,
+      type: SyncOperationType.update,
+      baseRevision: subject.revision,
+      data: {...subject.toJson(), 'account_id': subject.accountId},
+    );
 
     await _database.transaction(() async {
       await (_database.update(_database.localSubjects)..where(
@@ -101,17 +120,15 @@ class SubjectRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: subject.accountId,
-        entity: SyncEntity.subject,
-        entityId: subject.id,
-        type: SyncOperationType.update,
-        baseRevision: subject.revision,
-        data: {...subject.toJson(), 'account_id': subject.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return subject.copyWith(syncStatus: SyncStatus.pending, updatedAt: now);
+    final revision = await _cloud.deliverNow(operation);
+    return subject.copyWith(
+      updatedAt: now,
+      revision: revision ?? subject.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
   /// Returns impact counts shown in the delete confirmation (FR-SUB-004).
@@ -165,19 +182,23 @@ class SubjectRepository {
             ))
             .get();
 
+    final operations = <PendingOperation>[];
+    final subjectOperation = _writer.build(
+      accountId: accountId,
+      entity: SyncEntity.subject,
+      entityId: subjectId,
+      type: SyncOperationType.delete,
+      baseRevision: subject.revision,
+      data: {
+        'id': subjectId,
+        'account_id': accountId,
+        'deleted_at': now.toIso8601String(),
+      },
+    );
+
     await _database.transaction(() async {
       for (final task in tasks) {
-        await (_database.update(
-          _database.localTasks,
-        )..where((t) => t.id.equals(task.id))).write(
-          LocalTasksCompanion(
-            subjectId: const d.Value(null),
-            syncStatus: const d.Value('pending'),
-            updatedAt: d.Value(now),
-          ),
-        );
-
-        await _writer.enqueue(
+        final taskOperation = _writer.build(
           accountId: accountId,
           entity: SyncEntity.task,
           entityId: task.id,
@@ -190,9 +211,26 @@ class SubjectRepository {
             'revision': task.revision,
           },
         );
+        operations.add(taskOperation);
+
+        await (_database.update(
+          _database.localTasks,
+        )..where((t) => t.id.equals(task.id))).write(
+          LocalTasksCompanion(
+            subjectId: const d.Value(null),
+            syncStatus: const d.Value('pending'),
+            updatedAt: d.Value(now),
+          ),
+        );
+
+        await _writer.enqueueBuilt(taskOperation);
       }
 
-      await _timetable.deleteForSubject(accountId, subjectId);
+      await _timetable.deleteForSubject(
+        accountId,
+        subjectId,
+        collect: operations,
+      );
 
       await (_database.update(
         _database.localSubjects,
@@ -204,19 +242,13 @@ class SubjectRepository {
         ),
       );
 
-      await _writer.enqueue(
-        accountId: accountId,
-        entity: SyncEntity.subject,
-        entityId: subjectId,
-        type: SyncOperationType.delete,
-        baseRevision: subject.revision,
-        data: {
-          'id': subjectId,
-          'account_id': accountId,
-          'deleted_at': now.toIso8601String(),
-        },
-      );
+      await _writer.enqueueBuilt(subjectOperation);
+      operations.add(subjectOperation);
     });
+
+    for (final operation in operations) {
+      await _cloud.deliverNow(operation);
+    }
   }
 
   Future<void> _validate(Subject subject, {required String? checkId}) async {

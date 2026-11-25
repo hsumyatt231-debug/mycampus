@@ -4,6 +4,7 @@ import '../constants/app_constants.dart';
 import '../models/enums.dart';
 import '../models/user_profile.dart';
 import '../services/cloud_gateway.dart';
+import '../services/cloud_write_service.dart';
 import '../services/encryption_key_service.dart';
 import '../services/id_service.dart';
 import '../services/local_database.dart';
@@ -23,6 +24,7 @@ class AccountRepository {
     required this._writer,
     required this._keyService,
     required this._gateway,
+    required this._cloud,
   });
 
   final LocalDatabase _database;
@@ -30,6 +32,7 @@ class AccountRepository {
   final PendingOperationWriter _writer;
   final EncryptionKeyService _keyService;
   final CloudGateway _gateway;
+  final CloudWriteService _cloud;
 
   Future<UserProfile?> restoreSession() async {
     final accountId = await _settings.sessionAccountId();
@@ -81,6 +84,35 @@ class AccountRepository {
     final id = IdService.newId();
     final salt = HashService.newSalt();
 
+    // Online-first: the API owns the identity before the local row is written.
+    // A network failure keeps the registration local-only; a server rejection
+    // (for example an email already taken) aborts without a device account.
+    String? cloudToken;
+    if (_gateway.isConfigured) {
+      try {
+        final result = await _gateway.cloudRegister(
+          id: id,
+          fullName: name,
+          email: normalizedEmail,
+          password: password,
+          role: role.code,
+        );
+        final token = result['token']?.toString();
+        final profile = result['profile'];
+        final cloudId = profile is Map ? profile['id']?.toString() : null;
+        if (token == null || token.isEmpty || cloudId != id) {
+          throw const AccountAuthException(
+            'The API returned an invalid account identity.',
+          );
+        }
+        cloudToken = token;
+      } on CloudUnavailableException {
+        // Offline: keep the local-first fallback so sign-in still works.
+      } on CloudRejectedException catch (error) {
+        throw AccountAuthException(error.message);
+      }
+    }
+
     await _database
         .into(_database.accounts)
         .insert(
@@ -101,14 +133,7 @@ class AccountRepository {
     await _keyService.keyForAccount(id);
     await _keyService.markKeyAvailable(id);
     await _settings.setSessionAccount(id);
-
-    await _linkCloudAccount(
-      id: id,
-      fullName: name,
-      email: normalizedEmail,
-      password: password,
-      role: role.code,
-    );
+    if (cloudToken != null) await _settings.setCloudToken(cloudToken);
 
     final row = await _accountById(id);
     return _map(row!);
@@ -147,48 +172,6 @@ class AccountRepository {
       role: row.role,
     );
     return _map(row);
-  }
-
-  /// Mirrors a new device account into the API and keeps its bearer token.
-  /// A failure never blocks local registration: offline accounts still work.
-  Future<void> _linkCloudAccount({
-    required String id,
-    required String fullName,
-    required String email,
-    required String password,
-    required String role,
-  }) async {
-    if (!_gateway.isConfigured) return;
-    try {
-      final result = await _gateway.cloudRegister(
-        id: id,
-        fullName: fullName,
-        email: email,
-        password: password,
-        role: role,
-      );
-      final token = result['token']?.toString();
-      final profile = result['profile'];
-      final cloudId = profile is Map ? profile['id']?.toString() : null;
-      if (token != null && token.isNotEmpty && cloudId == id) {
-        await _settings.setCloudToken(token);
-        return;
-      }
-    } on CloudUnavailableException {
-      await _settings.clearCloudToken();
-      return;
-    } on CloudRejectedException {
-      // The email may already exist on the API.
-    }
-
-    // Same email but a different cloud id cannot own this device's sync data.
-    await _fetchCloudToken(
-      id: id,
-      fullName: fullName,
-      email: email,
-      password: password,
-      role: role,
-    );
   }
 
   /// Signs in through the API to refresh the stored bearer token. Accounts
@@ -362,6 +345,19 @@ class AccountRepository {
       throw const AccountValidationException('Enter your full name.');
     }
 
+    final operation = _writer.build(
+      accountId: profile.id,
+      entity: SyncEntity.profile,
+      entityId: profile.id,
+      type: SyncOperationType.update,
+      data: {
+        'id': profile.id,
+        'full_name': name,
+        'academic_timezone': profile.academicTimezone,
+        'time_format': profile.timeFormat.code,
+      },
+    );
+
     await _database.transaction(() async {
       await (_database.update(
         _database.accounts,
@@ -372,20 +368,10 @@ class AccountRepository {
         ),
       );
 
-      await _writer.enqueue(
-        accountId: profile.id,
-        entity: SyncEntity.profile,
-        entityId: profile.id,
-        type: SyncOperationType.update,
-        data: {
-          'id': profile.id,
-          'full_name': name,
-          'academic_timezone': profile.academicTimezone,
-          'time_format': profile.timeFormat.code,
-        },
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
+    await _cloud.deliverNow(operation);
     return profile.copyWith(fullName: name);
   }
 
@@ -393,6 +379,19 @@ class AccountRepository {
     UserProfile profile,
     TimeFormat format,
   ) async {
+    final operation = _writer.build(
+      accountId: profile.id,
+      entity: SyncEntity.profile,
+      entityId: profile.id,
+      type: SyncOperationType.update,
+      data: {
+        'id': profile.id,
+        'full_name': profile.fullName,
+        'academic_timezone': profile.academicTimezone,
+        'time_format': format.code,
+      },
+    );
+
     await _database.transaction(() async {
       await (_database.update(
         _database.accounts,
@@ -403,20 +402,10 @@ class AccountRepository {
         ),
       );
 
-      await _writer.enqueue(
-        accountId: profile.id,
-        entity: SyncEntity.profile,
-        entityId: profile.id,
-        type: SyncOperationType.update,
-        data: {
-          'id': profile.id,
-          'full_name': profile.fullName,
-          'academic_timezone': profile.academicTimezone,
-          'time_format': format.code,
-        },
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
+    await _cloud.deliverNow(operation);
     return profile.copyWith(timeFormat: format);
   }
 

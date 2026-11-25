@@ -1,15 +1,18 @@
 import 'package:drift/drift.dart' as d;
 
 import '../models/enums.dart';
+import '../models/sync_models.dart';
 import '../models/timetable_entry.dart';
+import '../services/cloud_write_service.dart';
 import '../services/local_database.dart';
 import 'pending_operation_writer.dart';
 
 class TimetableRepository {
-  TimetableRepository(this._database, this._writer);
+  TimetableRepository(this._database, this._writer, this._cloud);
 
   final LocalDatabase _database;
   final PendingOperationWriter _writer;
+  final CloudWriteService _cloud;
 
   Future<List<TimetableEntry>> getAll(String accountId) async {
     final rows =
@@ -53,6 +56,14 @@ class TimetableRepository {
     await _validate(entry);
     final now = DateTime.now().toUtc();
 
+    final operation = _writer.build(
+      accountId: entry.accountId,
+      entity: SyncEntity.timetableEntry,
+      entityId: entry.id,
+      type: SyncOperationType.create,
+      data: {...entry.toJson(), 'account_id': entry.accountId},
+    );
+
     await _database.transaction(() async {
       await _database
           .into(_database.localTimetableEntries)
@@ -69,21 +80,29 @@ class TimetableRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: entry.accountId,
-        entity: SyncEntity.timetableEntry,
-        entityId: entry.id,
-        type: SyncOperationType.create,
-        data: {...entry.toJson(), 'account_id': entry.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return entry.copyWith(updatedAt: now);
+    final revision = await _cloud.deliverNow(operation);
+    return entry.copyWith(
+      updatedAt: now,
+      revision: revision ?? entry.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
   Future<TimetableEntry> update(TimetableEntry entry) async {
     await _validate(entry);
     final now = DateTime.now().toUtc();
+
+    final operation = _writer.build(
+      accountId: entry.accountId,
+      entity: SyncEntity.timetableEntry,
+      entityId: entry.id,
+      type: SyncOperationType.update,
+      baseRevision: entry.revision,
+      data: {...entry.toJson(), 'account_id': entry.accountId},
+    );
 
     await _database.transaction(() async {
       await (_database.update(
@@ -100,21 +119,34 @@ class TimetableRepository {
         ),
       );
 
-      await _writer.enqueue(
-        accountId: entry.accountId,
-        entity: SyncEntity.timetableEntry,
-        entityId: entry.id,
-        type: SyncOperationType.update,
-        baseRevision: entry.revision,
-        data: {...entry.toJson(), 'account_id': entry.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return entry.copyWith(syncStatus: SyncStatus.pending, updatedAt: now);
+    final revision = await _cloud.deliverNow(operation);
+    return entry.copyWith(
+      updatedAt: now,
+      revision: revision ?? entry.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
-  Future<void> delete(TimetableEntry entry) async {
+  Future<void> delete(
+    TimetableEntry entry, {
+    List<PendingOperation>? collect,
+  }) async {
     final now = DateTime.now().toUtc();
+    final operation = _writer.build(
+      accountId: entry.accountId,
+      entity: SyncEntity.timetableEntry,
+      entityId: entry.id,
+      type: SyncOperationType.delete,
+      baseRevision: entry.revision,
+      data: {
+        'id': entry.id,
+        'account_id': entry.accountId,
+        'deleted_at': now.toIso8601String(),
+      },
+    );
 
     await _database.transaction(() async {
       await (_database.update(
@@ -127,24 +159,23 @@ class TimetableRepository {
         ),
       );
 
-      await _writer.enqueue(
-        accountId: entry.accountId,
-        entity: SyncEntity.timetableEntry,
-        entityId: entry.id,
-        type: SyncOperationType.delete,
-        baseRevision: entry.revision,
-        data: {
-          'id': entry.id,
-          'account_id': entry.accountId,
-          'deleted_at': now.toIso8601String(),
-        },
-      );
+      await _writer.enqueueBuilt(operation);
     });
+
+    if (collect != null) {
+      collect.add(operation);
+    } else {
+      await _cloud.deliverNow(operation);
+    }
   }
 
   /// Removes timetable rows attached to a deleted subject (DET-SUB-003),
   /// queuing a delete for each entry.
-  Future<int> deleteForSubject(String accountId, String subjectId) async {
+  Future<int> deleteForSubject(
+    String accountId,
+    String subjectId, {
+    List<PendingOperation>? collect,
+  }) async {
     final rows =
         await (_database.select(_database.localTimetableEntries)..where(
               (t) =>
@@ -155,7 +186,7 @@ class TimetableRepository {
             .get();
 
     for (final row in rows) {
-      await delete(_map(row));
+      await delete(_map(row), collect: collect);
     }
     return rows.length;
   }

@@ -14,19 +14,19 @@ class PendingOperationWriter {
 
   final LocalDatabase database;
 
-  /// Enqueues an operation and returns its stable identity.
+  /// Builds the stable operation identity without persisting it.
   ///
-  /// The operation depends on the latest queued operation for the account so
-  /// push order preserves local commit order. Retries reuse the same
-  /// operation ID and fingerprint (FR-SYNC-002, FR-SYNC-014).
-  Future<PendingOperation> enqueue({
+  /// Online writes push this same object immediately; offline writes hand it
+  /// to [enqueueBuilt]. Both paths therefore share one operation ID and
+  /// fingerprint (FR-SYNC-002, FR-SYNC-014).
+  PendingOperation build({
     required String accountId,
     required SyncEntity entity,
     required String entityId,
     required SyncOperationType type,
     required Map<String, dynamic> data,
     int baseRevision = 0,
-  }) async {
+  }) {
     final operationId = IdService.newId();
     final payload = <String, dynamic>{
       'operation_id': operationId,
@@ -37,38 +37,7 @@ class PendingOperationWriter {
       'base_revision': baseRevision,
       'data': data,
     };
-    final fingerprint = HashService.fingerprint(payload);
     final now = DateTime.now().toUtc();
-
-    final dependent =
-        await (database.select(database.pendingOperations)
-              ..where(
-                (t) =>
-                    t.accountId.equals(accountId) &
-                    t.status.isIn(['pending', 'failed', 'sending']),
-              )
-              ..orderBy([(t) => d.OrderingTerm.desc(t.createdAt)])
-              ..limit(1))
-            .getSingleOrNull();
-
-    await database
-        .into(database.pendingOperations)
-        .insert(
-          PendingOperationsCompanion.insert(
-            operationId: operationId,
-            accountId: accountId,
-            entity: entity.code,
-            entityId: entityId,
-            type: type.code,
-            payloadJson: jsonEncode(payload),
-            fingerprint: fingerprint,
-            baseRevision: d.Value(baseRevision),
-            dependsOn: d.Value(dependent?.operationId),
-            createdAt: now,
-            updatedAt: now,
-          ),
-        );
-
     return PendingOperation(
       operationId: operationId,
       accountId: accountId,
@@ -76,11 +45,83 @@ class PendingOperationWriter {
       entityId: entityId,
       type: type,
       payload: payload,
-      fingerprint: fingerprint,
+      fingerprint: HashService.fingerprint(payload),
       baseRevision: baseRevision,
-      dependsOn: dependent?.operationId,
       createdAt: now,
       updatedAt: now,
+    );
+  }
+
+  /// Enqueues a pre-built operation and returns it.
+  ///
+  /// The operation depends on the latest queued operation for the account so
+  /// push order preserves local commit order.
+  Future<PendingOperation> enqueueBuilt(PendingOperation operation) async {
+    final dependent =
+        await (database.select(database.pendingOperations)
+              ..where(
+                (t) =>
+                    t.accountId.equals(operation.accountId) &
+                    t.status.isIn(['pending', 'failed', 'sending']),
+              )
+              ..orderBy([(t) => d.OrderingTerm.desc(t.createdAt)])
+              ..limit(1))
+            .getSingleOrNull();
+
+    final queued = PendingOperation(
+      operationId: operation.operationId,
+      accountId: operation.accountId,
+      entity: operation.entity,
+      entityId: operation.entityId,
+      type: operation.type,
+      payload: operation.payload,
+      fingerprint: operation.fingerprint,
+      baseRevision: operation.baseRevision,
+      dependsOn: dependent?.operationId,
+      createdAt: operation.createdAt,
+      updatedAt: operation.updatedAt,
+    );
+
+    await database
+        .into(database.pendingOperations)
+        .insert(
+          PendingOperationsCompanion.insert(
+            operationId: queued.operationId,
+            accountId: queued.accountId,
+            entity: queued.entity.code,
+            entityId: queued.entityId,
+            type: queued.type.code,
+            payloadJson: jsonEncode(queued.payload),
+            fingerprint: queued.fingerprint,
+            baseRevision: d.Value(queued.baseRevision),
+            dependsOn: d.Value(queued.dependsOn),
+            createdAt: queued.createdAt ?? DateTime.now().toUtc(),
+            updatedAt: queued.updatedAt ?? DateTime.now().toUtc(),
+          ),
+        );
+
+    return queued;
+  }
+
+  /// Backwards-compatible helper used by callers that do not need to push the
+  /// operation immediately.
+  Future<PendingOperation> enqueue({
+    required String accountId,
+    required SyncEntity entity,
+    required String entityId,
+    required SyncOperationType type,
+    required Map<String, dynamic> data,
+    int baseRevision = 0,
+  }) {
+    return enqueueBuilt(
+      build(
+        accountId: accountId,
+        entity: entity,
+        entityId: entityId,
+        type: type,
+        data: data,
+        baseRevision: baseRevision,
+      ),
     );
   }
 

@@ -4,11 +4,19 @@ Python FastAPI backend for the existing MyCampus Flutter application.
 
 ## Status
 
-Phase 10 (final integration) is complete. Authentication, profile, planner
-controllers, classroom/assignment endpoints, sync operation/pull/status, and
-the Flutter password-endpoint wiring are implemented phase by phase after each
-review. Real SQLite, HTTP, `flutter analyze` and `flutter test` verification
-passes for every completed phase.
+Phase 11 is complete. Authentication, profile, planner controllers,
+classroom/assignment endpoints, sync operation/pull/status, and the Flutter
+password-endpoint wiring are implemented phase by phase after each review.
+Real SQLite, HTTP, `flutter analyze` and `flutter test` verification passes for
+every completed phase.
+
+### Write model (Phase 11)
+
+The Flutter client is online-first: each write is delivered immediately through
+the existing `POST /api/v1/sync/operation` endpoint. When that request cannot be
+delivered (offline, timeout or missing token), the operation stays in the local
+Drift `pending_operations` queue and the Sync screen can drain it later. No new
+REST endpoints were added for this phase; the backend is unchanged.
 
 ## Design constraints
 

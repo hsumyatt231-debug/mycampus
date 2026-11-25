@@ -1,15 +1,18 @@
 import 'package:drift/drift.dart' as d;
 
 import '../models/enums.dart';
+import '../models/sync_models.dart';
 import '../models/task.dart';
+import '../services/cloud_write_service.dart';
 import '../services/local_database.dart';
 import 'pending_operation_writer.dart';
 
 class TaskRepository {
-  TaskRepository(this._database, this._writer);
+  TaskRepository(this._database, this._writer, this._cloud);
 
   final LocalDatabase _database;
   final PendingOperationWriter _writer;
+  final CloudWriteService _cloud;
 
   Future<List<Task>> getAll(String accountId) async {
     final rows =
@@ -43,6 +46,14 @@ class TaskRepository {
     final now = DateTime.now().toUtc();
     final normalized = _normalize(task).copyWith(updatedAt: now);
 
+    final operation = _writer.build(
+      accountId: normalized.accountId,
+      entity: SyncEntity.task,
+      entityId: normalized.id,
+      type: SyncOperationType.create,
+      data: {...normalized.toJson(), 'account_id': normalized.accountId},
+    );
+
     await _database.transaction(() async {
       await _database
           .into(_database.localTasks)
@@ -63,22 +74,29 @@ class TaskRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: normalized.accountId,
-        entity: SyncEntity.task,
-        entityId: normalized.id,
-        type: SyncOperationType.create,
-        data: {...normalized.toJson(), 'account_id': normalized.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return normalized;
+    final revision = await _cloud.deliverNow(operation);
+    return normalized.copyWith(
+      revision: revision ?? normalized.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
   Future<Task> update(Task task, {Task? previous}) async {
     _validate(task);
     final now = DateTime.now().toUtc();
     final normalized = _normalize(task).copyWith(updatedAt: now);
+
+    final operation = _writer.build(
+      accountId: normalized.accountId,
+      entity: SyncEntity.task,
+      entityId: normalized.id,
+      type: SyncOperationType.update,
+      baseRevision: normalized.revision,
+      data: {...normalized.toJson(), 'account_id': normalized.accountId},
+    );
 
     await _database.transaction(() async {
       await (_database.update(_database.localTasks)..where(
@@ -103,17 +121,14 @@ class TaskRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: normalized.accountId,
-        entity: SyncEntity.task,
-        entityId: normalized.id,
-        type: SyncOperationType.update,
-        baseRevision: normalized.revision,
-        data: {...normalized.toJson(), 'account_id': normalized.accountId},
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
-    return normalized.copyWith(syncStatus: SyncStatus.pending);
+    final revision = await _cloud.deliverNow(operation);
+    return normalized.copyWith(
+      revision: revision ?? normalized.revision,
+      syncStatus: revision == null ? SyncStatus.pending : SyncStatus.synced,
+    );
   }
 
   /// Reversible completion; records completion time (DET-TASK-002).
@@ -129,8 +144,20 @@ class TaskRepository {
     return update(updated, previous: task);
   }
 
-  Future<void> delete(Task task) async {
+  Future<void> delete(Task task, {List<PendingOperation>? collect}) async {
     final now = DateTime.now().toUtc();
+    final operation = _writer.build(
+      accountId: task.accountId,
+      entity: SyncEntity.task,
+      entityId: task.id,
+      type: SyncOperationType.delete,
+      baseRevision: task.revision,
+      data: {
+        'id': task.id,
+        'account_id': task.accountId,
+        'deleted_at': now.toIso8601String(),
+      },
+    );
 
     await _database.transaction(() async {
       await (_database.update(_database.localTasks)..where(
@@ -144,19 +171,14 @@ class TaskRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: task.accountId,
-        entity: SyncEntity.task,
-        entityId: task.id,
-        type: SyncOperationType.delete,
-        baseRevision: task.revision,
-        data: {
-          'id': task.id,
-          'account_id': task.accountId,
-          'deleted_at': now.toIso8601String(),
-        },
-      );
+      await _writer.enqueueBuilt(operation);
     });
+
+    if (collect != null) {
+      collect.add(operation);
+    } else {
+      await _cloud.deliverNow(operation);
+    }
   }
 
   void _validate(Task task) {

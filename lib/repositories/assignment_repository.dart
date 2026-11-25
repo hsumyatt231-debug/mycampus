@@ -5,16 +5,23 @@ import 'package:drift/drift.dart' as d;
 import '../models/assignment.dart';
 import '../models/enums.dart';
 import '../services/cloud_gateway.dart';
+import '../services/cloud_write_service.dart';
 import '../services/id_service.dart';
 import '../services/local_database.dart';
 import 'pending_operation_writer.dart';
 
 class AssignmentRepository {
-  AssignmentRepository(this._database, this._writer, this._gateway);
+  AssignmentRepository(
+    this._database,
+    this._writer,
+    this._gateway,
+    this._cloud,
+  );
 
   final LocalDatabase _database;
   final PendingOperationWriter _writer;
   final CloudGateway _gateway;
+  final CloudWriteService _cloud;
 
   Future<List<Assignment>> cached(
     String accountId, {
@@ -167,9 +174,9 @@ class AssignmentRepository {
         .go();
   }
 
-  /// Student completion is saved locally first and queued; the server
-  /// validates membership, publication and deletion state at push time
-  /// (FR-ASG-004, FR-SYNC-012).
+  /// Student completion is committed locally first, then delivered online via
+  /// `/sync/operation` when possible. The server validates membership,
+  /// publication and deletion state at push time (FR-ASG-004, FR-SYNC-012).
   Future<AssignmentProgress> setProgress({
     required String accountId,
     required Assignment assignment,
@@ -188,6 +195,22 @@ class AssignmentRepository {
     final revision = existing?.revision ?? 0;
     final completedAt = completed ? now : null;
 
+    final operation = _writer.build(
+      accountId: accountId,
+      entity: SyncEntity.assignmentProgress,
+      entityId: progressId,
+      type: SyncOperationType.update,
+      baseRevision: revision,
+      data: {
+        'id': progressId,
+        'account_id': accountId,
+        'assignment_id': assignment.id,
+        'is_completed': completed,
+        'completed_at': completedAt?.toIso8601String(),
+        'revision': revision,
+      },
+    );
+
     await _database.transaction(() async {
       await _database
           .into(_database.localAssignmentProgress)
@@ -204,31 +227,18 @@ class AssignmentRepository {
             ),
           );
 
-      await _writer.enqueue(
-        accountId: accountId,
-        entity: SyncEntity.assignmentProgress,
-        entityId: progressId,
-        type: SyncOperationType.update,
-        baseRevision: revision,
-        data: {
-          'id': progressId,
-          'account_id': accountId,
-          'assignment_id': assignment.id,
-          'is_completed': completed,
-          'completed_at': completedAt?.toIso8601String(),
-          'revision': revision,
-        },
-      );
+      await _writer.enqueueBuilt(operation);
     });
 
+    final acknowledged = await _cloud.deliverNow(operation);
     return AssignmentProgress(
       id: progressId,
       accountId: accountId,
       assignmentId: assignment.id,
       isCompleted: completed,
       completedAt: completedAt,
-      revision: revision,
-      syncStatus: SyncStatus.pending,
+      revision: acknowledged ?? revision,
+      syncStatus: acknowledged == null ? SyncStatus.pending : SyncStatus.synced,
       updatedAt: now,
     );
   }
