@@ -1,7 +1,8 @@
-/// Cloud surface used by the Supabase gateway.
+/// Legacy Supabase table/RPC names kept for reference only.
 ///
-/// Names mirror the SRS RPC/table contracts. Classroom administration, joins
-/// and assignment publication are online-only (FR-CLASS-011, FR-ASG-001).
+/// The active cloud surface is the SQLite/SQLAlchemy REST API described in
+/// `ApiConfig`; this class is no longer used by any gateway. See
+/// `lib/constants/api_config.dart` for the live endpoints.
 abstract final class ApiEndpoints {
   // Auth (Supabase Auth handles these directly).
   static const String signUp = 'auth/sign-up';

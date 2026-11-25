@@ -253,18 +253,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               buildWhen: (previous, current) =>
                                   previous.busy != current.busy,
                               builder: (context, state) {
-                                return FilledButton(
-                                  onPressed: state.busy ? null : _submit,
-                                  child: state.busy
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Text('Create account'),
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    FilledButton(
+                                      onPressed: state.busy ? null : _submit,
+                                      child: state.busy
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : const Text('Create account'),
+                                    ),
+
+                                  ],
                                 );
                               },
                             ),
@@ -276,9 +282,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const ErrorBanner(
                       tone: BannerTone.info,
                       message:
-                          'Local-only mode: no verification email is sent and '
-                          'no cloud account is created. Your password hash and '
-                          'planner data stay on this device.',
+                          'Your account is created on this device first, so you '
+                          'can start right away, even without a connection.',
                     ),
                     const SizedBox(height: 14),
                     Row(

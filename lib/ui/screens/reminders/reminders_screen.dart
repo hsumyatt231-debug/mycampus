@@ -338,9 +338,8 @@ class _ReminderNote extends StatelessWidget {
           Expanded(
             child: Text(
               'Reminders are shown in-app. Task and assignment completion is '
-              'saved locally and queued for sync. Timed reminders are '
-              'calculated from your deadlines; native push notifications are '
-              'not enabled in this build.',
+              'saved on this device and synced when you are connected. Timed '
+              'reminders are calculated from your deadlines.',
               style: TextStyle(
                 fontSize: 11,
                 height: 1.45,

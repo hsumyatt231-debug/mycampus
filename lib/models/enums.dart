@@ -131,7 +131,8 @@ enum SyncStatus {
   pending('pending', 'Pending sync'),
   sending('sending', 'Syncing'),
   failed('failed', 'Sync failed'),
-  conflict('conflict', 'Conflict');
+  conflict('conflict', 'Conflict'),
+  discarded('discarded', 'Discarded');
 
   const SyncStatus(this.code, this.label);
 

@@ -169,8 +169,15 @@ GoRouter buildAppRouter({required AuthBloc authBloc}) {
 
   // Keep the refresh notifier alive for the app's lifetime; GoRouter does not
   // own it. The router is created once per session.
-  _retainedRefresh.add(refresh);
+  _retainedRefresh[router] = refresh;
   return router;
 }
 
-final List<GoRouterRefreshStream> _retainedRefresh = [];
+final Map<GoRouter, GoRouterRefreshStream> _retainedRefresh = {};
+
+/// Releases the refresh notifier that [buildAppRouter] attached to [router].
+/// Call this before disposing the router so its stream subscription is
+/// cancelled instead of leaking for the process lifetime.
+void disposeAppRouter(GoRouter router) {
+  _retainedRefresh.remove(router)?.dispose();
+}

@@ -139,10 +139,8 @@ class _ClassroomDetailView extends StatelessWidget {
                     child: ErrorBanner(
                       tone: BannerTone.info,
                       message:
-                          'Online-only classroom. Live refresh, join-code '
-                          'changes and assignment administration require a '
-                          'configured Supabase backend. Cached details are '
-                          'shown below.',
+                          'Live updates need a connection. Showing the last '
+                          'saved details below.',
                     ),
                   ),
                 _ClassroomHeader(
@@ -423,8 +421,8 @@ class _MissingClassroom extends StatelessWidget {
         icon: Icons.cloud_off_outlined,
         title: 'Classroom not cached',
         message:
-            'A configured backend is required to load this classroom. '
-            'If it was previously cached, refresh to try again.',
+            'This classroom is not available offline yet. Refresh when you '
+            'are connected to load it.',
         action: OutlinedButton.icon(
           onPressed: busy ? null : onRetry,
           icon: const Icon(Icons.refresh_rounded, size: 18),

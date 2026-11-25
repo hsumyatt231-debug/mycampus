@@ -90,7 +90,9 @@ class _MyCampusAppState extends State<MyCampusApp> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _authSubscription?.cancel();
+    disposeAppRouter(_router);
     _router.dispose();
+    unawaited(widget.dependencies.dispose());
     super.dispose();
   }
 

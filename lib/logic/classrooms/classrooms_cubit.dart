@@ -138,9 +138,8 @@ class ClassroomsCubit extends Cubit<ClassroomsState> {
       emit(
         state.copyWith(
           error:
-              'Classrooms require a configured Supabase backend. This '
-              'build is running locally, so classroom data cannot be '
-              'refreshed.',
+              'Classrooms need a connection to refresh. Showing the last '
+              'saved data.',
           configured: false,
         ),
       );

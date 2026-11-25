@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart' show TableUpdateQuery;
 
+import '../constants/api_config.dart';
 import '../logic/app_lock/app_lock_cubit.dart';
 import '../logic/auth/auth_bloc.dart';
 import '../logic/sync/sync_cubit.dart';
@@ -17,16 +18,16 @@ import 'academic_clock.dart';
 import 'cloud_gateway.dart';
 import 'connectivity_service.dart';
 import 'encryption_key_service.dart';
+import 'http_cloud_gateway.dart';
 import 'local_database.dart';
 import 'notification_service.dart';
-import 'supabase_service.dart';
 import 'sync_engine.dart';
 
 /// Composition root for the local-first build.
 ///
-/// The cloud gateway is intentionally [OfflineCloudGateway]; configuring a
-/// live Supabase project replaces this one binding without touching feature
-/// code (FR-SYNC-017).
+/// The cloud gateway is [HttpCloudGateway], pointed at the SQLite/SQLAlchemy
+/// API by `MYCAMPUS_API_BASE_URL` (see [ApiConfig]). Swapping this one binding
+/// is enough to change the whole app's cloud endpoint (FR-SYNC-017).
 class AppDependencies {
   AppDependencies._({
     required this.database,
@@ -90,16 +91,9 @@ class AppDependencies {
     final writer = PendingOperationWriter(database);
     final keyService = EncryptionKeyService(database);
 
-    // Supabase is optional in this build: absent environment values leave the
-    // client unconfigured and every cloud call reports unavailability.
-    final supabase = SupabaseService.instance;
-    try {
-      await supabase.initialize();
-    } catch (_) {
-      // A malformed configuration must not stop the local-first app.
-    }
-
-    const gateway = OfflineCloudGateway();
+    // Single cloud binding: the REST gateway talks to the SQLite/SQLAlchemy
+    // API. Local Drift storage remains the source of truth when it is offline.
+    final gateway = HttpCloudGateway(tokenProvider: settings.cloudToken);
 
     final timetable = TimetableRepository(database, writer);
     final subjects = SubjectRepository(database, writer, timetable);

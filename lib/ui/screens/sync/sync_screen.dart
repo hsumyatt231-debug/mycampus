@@ -56,10 +56,8 @@ class _SyncScreenState extends State<SyncScreen> {
                 const ErrorBanner(
                   tone: BannerTone.info,
                   message:
-                      'Local-only mode: planner changes are saved to the '
-                      'encrypted local store and queued. No Supabase backend '
-                      'is configured, so the queue is not sent and classrooms '
-                      'stay unavailable.',
+                      'Offline mode: your changes are saved on this device '
+                      'and will sync automatically when you are back online.',
                 ),
                 const SizedBox(height: 12),
               ],
@@ -175,7 +173,7 @@ class _StatusCard extends StatelessWidget {
                     : const Color(0xFFF1F5F9),
               ),
               StatusChip(
-                label: state.configured ? 'Backend configured' : 'No backend',
+                label: state.configured ? 'Connected' : 'Offline',
                 icon: state.configured
                     ? Icons.check_circle_outline_rounded
                     : Icons.cloud_off_outlined,
@@ -544,7 +542,7 @@ class _ConflictRow extends StatelessWidget {
     showAppSnack(
       context,
       resolution == 'local'
-          ? 'Local version queued for upload.'
+          ? 'Your version will sync shortly.'
           : 'Cloud version applied.',
     );
   }
@@ -628,9 +626,9 @@ class _SyncNote extends StatelessWidget {
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Each queued operation carries a stable operation ID and '
-              'payload fingerprint, so retries are idempotent. The queue '
-              'survives restarts and is scoped to the signed-in account.',
+              'Your changes are saved on this device first, then synced in '
+              'the background when a connection is available. Nothing is '
+              'lost if the app restarts.',
               style: TextStyle(
                 fontSize: 11,
                 height: 1.45,

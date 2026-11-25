@@ -595,7 +595,7 @@ class _LocalModeStrip extends StatelessWidget {
             SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Local-only mode · planner saved on this device',
+                'Available offline · saved on this device',
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,

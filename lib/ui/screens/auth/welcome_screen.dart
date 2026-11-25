@@ -197,7 +197,7 @@ class _NarrowWelcome extends StatelessWidget {
                       ),
                       SizedBox(height: 6),
                       Text(
-                        'Local-only build: accounts and planner data stay on this device.',
+                        'Your planner stays available, even without a connection.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 11.5,
@@ -357,9 +357,8 @@ class _WideWelcome extends StatelessWidget {
                     ),
                     const SizedBox(height: 22),
                     const Text(
-                      'Local-only build: accounts and planner data stay on '
-                      'this device. Classroom cloud features require a '
-                      'configured Supabase backend.',
+                      'Plan your day offline. Classrooms and shared data sync '
+                      'when you are connected.',
                       style: TextStyle(
                         fontSize: 11.5,
                         color: AppColors.textMuted,

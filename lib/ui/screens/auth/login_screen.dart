@@ -64,8 +64,8 @@ class _LoginScreenState extends State<LoginScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'No email is sent in local-only mode. Set a new password for '
-                  'an account already registered on this device.',
+                  'Choose a new password for an account registered on this '
+                  'device. You will use it the next time you sign in.',
                   style: TextStyle(
                     fontSize: 12.5,
                     height: 1.45,
@@ -290,18 +290,24 @@ class _LoginScreenState extends State<LoginScreen> {
                               buildWhen: (previous, current) =>
                                   previous.busy != current.busy,
                               builder: (context, state) {
-                                return FilledButton(
-                                  onPressed: state.busy ? null : _submit,
-                                  child: state.busy
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2.2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Text('Sign in'),
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    FilledButton(
+                                      onPressed: state.busy ? null : _submit,
+                                      child: state.busy
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : const Text('Sign in'),
+                                    ),
+
+                                  ],
                                 );
                               },
                             ),
@@ -328,9 +334,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 6),
                     const Text(
-                      'Local-only mode: credentials are verified on this '
-                      'device. Cloud sign-in activates when Supabase is '
-                      'configured.',
+                      'Offline-first: your planner is always available, even '
+                      'without a connection.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 11,

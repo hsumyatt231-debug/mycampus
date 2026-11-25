@@ -126,6 +126,7 @@ class AppLockCubit extends Cubit<AppLockState> {
         emit(state.copyWith(busy: false, error: 'Incorrect password.'));
         return false;
       }
+      await _accounts.refreshCloudToken(accountId, password);
       emit(const AppLockState(status: AppLockStatus.unlocked));
       return true;
     } catch (_) {

@@ -327,6 +327,11 @@ class SyncBadge extends StatelessWidget {
         AppColors.danger,
         AppColors.dangerSoft,
       ),
+      SyncStatus.discarded => (
+        'Discarded',
+        AppColors.warning,
+        const Color(0xFFFFF4E0),
+      ),
     };
 
     return StatusChip(label: label, color: color, background: background);

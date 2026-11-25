@@ -151,7 +151,7 @@ class _ProfileView extends StatelessWidget {
             title: 'Connections',
             subtitle: sync.configured
                 ? 'Cloud sync is configured.'
-                : 'Local-only mode is active on this device.',
+                : 'Your planner is available offline.',
             children: [
               _SettingsTile(
                 icon: Icons.groups_outlined,
@@ -193,8 +193,8 @@ class _ProfileView extends StatelessWidget {
                 const SectionHeader(
                   title: 'Session',
                   subtitle:
-                      'Signing out keeps planner data on this device in '
-                      'local-only mode.',
+                      'You can sign back in anytime. Your planner data stays '
+                      'on this device.',
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -317,8 +317,8 @@ class _ProfileView extends StatelessWidget {
                 children: [
                   const Text(
                     'Deadlines without a time use the end of the day in this '
-                    'timezone. Changing it requires a configured backend and '
-                    'no pending edits. Wall-clock values are preserved.',
+                    'timezone. Changing it requires all pending changes to be '
+                    'synced first. Existing clock times are preserved.',
                     style: TextStyle(
                       fontSize: 12.5,
                       height: 1.5,
@@ -474,14 +474,9 @@ class _ProfileView extends StatelessWidget {
     if (submitted != true || !context.mounted) return;
 
     try {
-      final valid = await accounts.verifyPassword(profile.id, currentValue);
-      if (!context.mounted) return;
-      if (!valid) {
-        showAppSnack(context, 'Current password is incorrect.');
-        return;
-      }
-      await accounts.resetPassword(
-        email: profile.email,
+      await accounts.changePassword(
+        accountId: profile.id,
+        currentPassword: currentValue,
         newPassword: nextValue,
       );
       if (context.mounted) showAppSnack(context, 'Password updated.');
@@ -525,10 +520,9 @@ class _ProfileView extends StatelessWidget {
           style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
         ),
         content: Text(
-          '$pending local change${pending == 1 ? '' : 's'} have not reached '
-          'the cloud. Synchronize first, or discard them and sign out. '
-          'Discarding removes the queued operations but keeps your local '
-          'planner data in this build.',
+          '$pending change${pending == 1 ? '' : 's'} have not been synced yet. '
+          'Synchronize first, or discard them and sign out. Discarding removes '
+          'the queued changes but keeps your planner data on this device.',
           style: const TextStyle(
             fontSize: 13,
             height: 1.5,
@@ -646,9 +640,9 @@ class _IdentityCard extends StatelessWidget {
                         background: const Color(0xFFFFF4E0),
                       ),
                     const StatusChip(
-                      label: 'Local-only mode',
-                      color: AppColors.textSecondary,
-                      background: Color(0xFFF1F5F9),
+                      label: 'Offline ready',
+                      color: AppColors.success,
+                      background: Color(0xFFE7F9F1),
                     ),
                   ],
                 ),
@@ -863,9 +857,8 @@ class _PrivacyNote extends StatelessWidget {
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              'MyCampus never shares student task, event or completion data '
-              'with teachers. Classrooms are online-only and appear in '
-              'read-only cached form when the backend is unavailable.',
+              'Your personal planner data stays private to your account. '
+              'Classrooms and shared assignments need a connection.',
               style: TextStyle(
                 fontSize: 11,
                 height: 1.45,

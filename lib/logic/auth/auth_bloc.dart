@@ -221,7 +221,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           profile: profile,
           busy: false,
           pendingOperations: 0,
-          notice: 'Account created in local-only mode.',
+          notice: 'Account created. Welcome to MyCampus.',
         ),
       );
     } catch (error) {

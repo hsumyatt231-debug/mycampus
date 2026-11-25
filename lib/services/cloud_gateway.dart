@@ -68,7 +68,7 @@ class CloudChange {
 
 class CloudUnavailableException implements Exception {
   const CloudUnavailableException([
-    this.message = 'The cloud backend is not configured on this build.',
+    this.message = 'Cloud sync is not available right now.',
   ]);
 
   final String message;
@@ -89,6 +89,48 @@ class CloudRejectedException implements Exception {
 /// Cloud surface required by the local-first engine and classroom features.
 abstract interface class CloudGateway {
   bool get isConfigured;
+
+  /// Account auth. Both return the API envelope
+  /// `{'profile': {...}, 'token': '...', 'message': '...'}`.
+  /// Called best-effort by [AccountRepository] so offline sign-in still works.
+  Future<Map<String, dynamic>> cloudLogin({
+    required String email,
+    required String password,
+  });
+
+  Future<Map<String, dynamic>> cloudRegister({
+    required String id,
+    required String fullName,
+    required String email,
+    required String password,
+    required String role,
+  });
+
+  /// Links an account created by an older offline-only build, keeping its
+  /// local id as the cloud identity.
+  Future<Map<String, dynamic>> cloudAdoptLocal({
+    required String id,
+    required String fullName,
+    required String email,
+    required String password,
+    required String role,
+  });
+
+  /// Password changes go through the API so the bearer identity and the local
+  /// Drift credential stay on the same password. The current password is
+  /// verified by the API; callers keep the local credential unchanged until
+  /// this succeeds.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  });
+
+  /// Email-based reset used before sign-in. It is unauthenticated on the API,
+  /// matching the local-first recovery flow already present in the app.
+  Future<void> resetPassword({
+    required String email,
+    required String newPassword,
+  });
 
   Future<PushOutcome> pushOperation(PendingOperation operation);
 
@@ -156,6 +198,52 @@ class OfflineCloudGateway implements CloudGateway {
 
   @override
   bool get isConfigured => false;
+
+  @override
+  Future<Map<String, dynamic>> cloudLogin({
+    required String email,
+    required String password,
+  }) async {
+    throw const CloudUnavailableException();
+  }
+
+  @override
+  Future<Map<String, dynamic>> cloudRegister({
+    required String id,
+    required String fullName,
+    required String email,
+    required String password,
+    required String role,
+  }) async {
+    throw const CloudUnavailableException();
+  }
+
+  @override
+  Future<Map<String, dynamic>> cloudAdoptLocal({
+    required String id,
+    required String fullName,
+    required String email,
+    required String password,
+    required String role,
+  }) async {
+    throw const CloudUnavailableException();
+  }
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    throw const CloudUnavailableException();
+  }
+
+  @override
+  Future<void> resetPassword({
+    required String email,
+    required String newPassword,
+  }) async {
+    throw const CloudUnavailableException();
+  }
 
   @override
   Future<PushOutcome> pushOperation(PendingOperation operation) async {

@@ -10,12 +10,12 @@ import '../services/local_database.dart';
 import 'pending_operation_writer.dart';
 import 'settings_repository.dart';
 
-/// Local-only account management.
+/// Local account management with best-effort cloud registration/login.
 ///
-/// Production uses Supabase Auth (FR-AUTH-004/005/006); this implementation
-/// provides the same flows against the encrypted-local store so the app is
-/// usable without a backend. Passwords are salted SHA-256 for the local
-/// prototype and never logged.
+/// Drift remains the source of truth on the device, so an account can always
+/// be created and opened offline. When the API is reachable, the same id and
+/// credentials are registered there and the returned bearer token is stored
+/// for classroom and sync requests.
 class AccountRepository {
   AccountRepository({
     required this._database,
@@ -102,6 +102,14 @@ class AccountRepository {
     await _keyService.markKeyAvailable(id);
     await _settings.setSessionAccount(id);
 
+    await _linkCloudAccount(
+      id: id,
+      fullName: name,
+      email: normalizedEmail,
+      password: password,
+      role: role.code,
+    );
+
     final row = await _accountById(id);
     return _map(row!);
   }
@@ -130,7 +138,129 @@ class AccountRepository {
     await _settings.setSessionAccount(row.id);
     await _keyService.keyForAccount(row.id);
     await _keyService.markKeyAvailable(row.id);
+
+    await _fetchCloudToken(
+      id: row.id,
+      fullName: row.fullName,
+      email: row.email,
+      password: password,
+      role: row.role,
+    );
     return _map(row);
+  }
+
+  /// Mirrors a new device account into the API and keeps its bearer token.
+  /// A failure never blocks local registration: offline accounts still work.
+  Future<void> _linkCloudAccount({
+    required String id,
+    required String fullName,
+    required String email,
+    required String password,
+    required String role,
+  }) async {
+    if (!_gateway.isConfigured) return;
+    try {
+      final result = await _gateway.cloudRegister(
+        id: id,
+        fullName: fullName,
+        email: email,
+        password: password,
+        role: role,
+      );
+      final token = result['token']?.toString();
+      final profile = result['profile'];
+      final cloudId = profile is Map ? profile['id']?.toString() : null;
+      if (token != null && token.isNotEmpty && cloudId == id) {
+        await _settings.setCloudToken(token);
+        return;
+      }
+    } on CloudUnavailableException {
+      await _settings.clearCloudToken();
+      return;
+    } on CloudRejectedException {
+      // The email may already exist on the API.
+    }
+
+    // Same email but a different cloud id cannot own this device's sync data.
+    await _fetchCloudToken(
+      id: id,
+      fullName: fullName,
+      email: email,
+      password: password,
+      role: role,
+    );
+  }
+
+  /// Signs in through the API to refresh the stored bearer token. Accounts
+  /// created by older offline-only builds are adopted with their local id, so
+  /// their data and sync ownership keep matching. Local sign-in stays valid
+  /// even when the API is offline.
+  Future<void> _fetchCloudToken({
+    required String id,
+    required String fullName,
+    required String email,
+    required String password,
+    required String role,
+  }) async {
+    if (!_gateway.isConfigured) return;
+    try {
+      final result = await _gateway.cloudLogin(
+        email: email,
+        password: password,
+      );
+      final token = result['token']?.toString();
+      final profile = result['profile'];
+      final cloudId = profile is Map ? profile['id']?.toString() : null;
+      if (token != null && token.isNotEmpty && cloudId == id) {
+        await _settings.setCloudToken(token);
+        return;
+      }
+      // A same-email cloud account with a different id cannot own this
+      // device's sync data — fall through to adopting the local identity.
+    } on CloudUnavailableException {
+      await _settings.clearCloudToken();
+      return;
+    } on CloudRejectedException {
+      // Not registered on the API yet — try adopting the device account.
+    }
+
+    try {
+      final result = await _gateway.cloudAdoptLocal(
+        id: id,
+        fullName: fullName,
+        email: email,
+        password: password,
+        role: role,
+      );
+      final token = result['token']?.toString();
+      if (token != null && token.isNotEmpty) {
+        await _settings.setCloudToken(token);
+        return;
+      }
+    } on CloudUnavailableException {
+      // Offline: the local session is still valid.
+    } on CloudRejectedException {
+      // Conflicting cloud account or different password; keep local access.
+    }
+    await _settings.clearCloudToken();
+  }
+
+  /// Refreshes the bearer token with the password just entered at unlock.
+  /// Unlock itself must never fail because of a cloud problem.
+  Future<void> refreshCloudToken(String accountId, String password) async {
+    final row = await _accountById(accountId);
+    if (row == null) return;
+    try {
+      await _fetchCloudToken(
+        id: row.id,
+        fullName: row.fullName,
+        email: row.email,
+        password: password,
+        role: row.role,
+      );
+    } catch (_) {
+      // Keep the local unlock successful; sync can retry later.
+    }
   }
 
   Future<bool> verifyPassword(String accountId, String password) async {
@@ -151,8 +281,36 @@ class AccountRepository {
         'No account found for this email on this device.',
       );
     }
-    // Local-only mode cannot send email. A production build calls
-    // Supabase Auth resetPasswordForEmail here.
+    // Sample mode cannot send email. The local password reset flow below is
+    // the only supported path.
+  }
+
+  /// Changes the signed-in account's password on the API first, then mirrors
+  /// the new credential into Drift. The local credential is never changed when
+  /// the API rejects the current password or cannot be reached, so the next
+  /// unlock and token refresh keep working.
+  Future<void> changePassword({
+    required String accountId,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    if (newPassword.length < 8) {
+      throw const AccountValidationException(
+        'Password must be at least 8 characters.',
+      );
+    }
+    final row = await _accountById(accountId);
+    if (row == null) {
+      throw const AccountAuthException('No account found for this device.');
+    }
+
+    if (_gateway.isConfigured) {
+      await _gateway.changePassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+    }
+    await _writeLocalPassword(row, newPassword);
   }
 
   Future<void> resetPassword({
@@ -169,10 +327,20 @@ class AccountRepository {
       _database.accounts,
     )..where((t) => t.email.lower().equals(normalizedEmail))).getSingleOrNull();
 
-    if (row == null) {
+    if (row == null && !_gateway.isConfigured) {
       throw const AccountAuthException('No account found for this email.');
     }
 
+    if (_gateway.isConfigured) {
+      await _gateway.resetPassword(
+        email: normalizedEmail,
+        newPassword: newPassword,
+      );
+    }
+    if (row != null) await _writeLocalPassword(row, newPassword);
+  }
+
+  Future<void> _writeLocalPassword(AccountRow row, String newPassword) async {
     final salt = HashService.newSalt();
     await (_database.update(
       _database.accounts,
@@ -225,14 +393,30 @@ class AccountRepository {
     UserProfile profile,
     TimeFormat format,
   ) async {
-    await (_database.update(
-      _database.accounts,
-    )..where((t) => t.id.equals(profile.id))).write(
-      AccountsCompanion(
-        timeFormat: d.Value(format.code),
-        updatedAt: d.Value(DateTime.now().toUtc()),
-      ),
-    );
+    await _database.transaction(() async {
+      await (_database.update(
+        _database.accounts,
+      )..where((t) => t.id.equals(profile.id))).write(
+        AccountsCompanion(
+          timeFormat: d.Value(format.code),
+          updatedAt: d.Value(DateTime.now().toUtc()),
+        ),
+      );
+
+      await _writer.enqueue(
+        accountId: profile.id,
+        entity: SyncEntity.profile,
+        entityId: profile.id,
+        type: SyncOperationType.update,
+        data: {
+          'id': profile.id,
+          'full_name': profile.fullName,
+          'academic_timezone': profile.academicTimezone,
+          'time_format': format.code,
+        },
+      );
+    });
+
     return profile.copyWith(timeFormat: format);
   }
 
@@ -320,7 +504,7 @@ class AccountRepository {
           orElse: () => SyncEntity.profile,
         ),
         entityId: op.entityId,
-        status: SyncStatus.synced,
+        status: SyncStatus.discarded,
       );
     }
 

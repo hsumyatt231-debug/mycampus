@@ -81,10 +81,9 @@ class _ClassroomsView extends StatelessWidget {
                   const ErrorBanner(
                     tone: BannerTone.info,
                     message:
-                        'Classrooms are online-only. This build has no '
-                        'configured Supabase backend, so creation, joining and '
-                        'live data are unavailable. Any cached classrooms '
-                        'remain visible below.',
+                        'Classrooms need a connection for live updates. '
+                        'Classrooms you have already opened remain available '
+                        'below.',
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -121,9 +120,9 @@ class _ClassroomsView extends StatelessWidget {
                           : 'You have not joined a classroom',
                       message: isTeacher
                           ? 'Create a classroom to share assignments with '
-                                'your students. A configured backend is required.'
-                          : 'Ask your teacher for a join code. A configured '
-                                'backend is required to join.',
+                                'your students.'
+                          : 'Ask your teacher for a join code to join a '
+                                'classroom.',
                       action: isTeacher
                           ? FilledButton.icon(
                               onPressed: () => _create(context),
@@ -487,9 +486,8 @@ class _CreateClassroomDialogState extends State<_CreateClassroomDialog> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'The server generates the join code. Classrooms inherit the '
-                  'teacher’s academic timezone and cannot be rescheduled '
-                  'offline.',
+                  'A join code is generated for you. Classrooms use your '
+                  'academic timezone.',
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.45,

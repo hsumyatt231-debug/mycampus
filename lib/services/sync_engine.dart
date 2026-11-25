@@ -68,10 +68,9 @@ class SyncEngine {
       final result = SyncRunResult(
         outcome: SyncRunOutcome.offline,
         message: pending == 0
-            ? 'Everything is saved locally. Cloud sync is unavailable in '
-                  'this build.'
-            : '$pending change${pending == 1 ? '' : 's'} saved locally and '
-                  'waiting for a configured cloud backend.',
+            ? 'Everything is saved on this device.'
+            : '$pending change${pending == 1 ? '' : 's'} saved on this device '
+                  'and waiting to sync.',
         conflicts: conflicts,
       );
       await _emit(accountId, running: false, result: result);

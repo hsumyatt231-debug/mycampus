@@ -64,9 +64,7 @@ class TabHeader extends StatelessWidget {
           ...?actions,
           if (showUtilities) ...[
             _UtilityButton(
-              tooltip: sync.configured
-                  ? 'Sync center'
-                  : 'Sync center · local-only',
+              tooltip: 'Sync center',
               icon: sync.running
                   ? Icons.sync_rounded
                   : sync.pending > 0
